@@ -1,0 +1,7 @@
+venv/
+*.db
+*.db-wal
+*.db-shm
+ai-gateway
+__pycache__/
+*.pyc
