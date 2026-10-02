@@ -817,3 +817,113 @@ func splitComma(s string) []string {
 	}
 	return res
 }
+
+func (d *DB) GetAllVirtualKeys(limit, offset int) ([]models.VirtualKey, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	query := `SELECT id, key_id, key_hash, owner_id, status, plan_id, note, total_quota, remain_quota, consumed_quota,
+		rpm_limit, max_concurrency, max_allowed_ips, allowed_models, blocked_models, current_ip_count, last_ip,
+		last_used_at, created_at, updated_at, expired_at, revoked_at, regeneration_history
+		FROM virtual_keys ORDER BY id DESC LIMIT ? OFFSET ?`
+
+	rows, err := d.conn.Query(query, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var keys []models.VirtualKey
+	for rows.Next() {
+		vk := models.VirtualKey{}
+		var lastUsedAt, expiredAt, revokedAt sql.NullTime
+		if err := rows.Scan(
+			&vk.ID, &vk.KeyID, &vk.KeyHash, &vk.OwnerID, &vk.Status, &vk.PlanID, &vk.Note,
+			&vk.TotalQuota, &vk.RemainQuota, &vk.ConsumedQuota, &vk.RPMLimit, &vk.MaxConcurrency,
+			&vk.MaxAllowedIPs, &vk.AllowedModels, &vk.BlockedModels, &vk.CurrentIPCount, &vk.LastIP,
+			&lastUsedAt, &vk.CreatedAt, &vk.UpdatedAt, &expiredAt, &revokedAt, &vk.RegenerationHistory,
+		); err != nil {
+			return nil, err
+		}
+		if lastUsedAt.Valid {
+			vk.LastUsedAt = &lastUsedAt.Time
+		}
+		if expiredAt.Valid {
+			vk.ExpiredAt = &expiredAt.Time
+		}
+		if revokedAt.Valid {
+			vk.RevokedAt = &revokedAt.Time
+		}
+		keys = append(keys, vk)
+	}
+	return keys, nil
+}
+
+func (d *DB) GetAllModelPricing() ([]models.ModelPricing, error) {
+	rows, err := d.conn.Query(`SELECT id, model_name, input_multiplier, output_multiplier, min_charge, enabled, created_at, updated_at FROM model_pricing ORDER BY id ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []models.ModelPricing
+	for rows.Next() {
+		p := models.ModelPricing{}
+		if err := rows.Scan(&p.ID, &p.ModelName, &p.InputMultiplier, &p.OutputMultiplier, &p.MinCharge, &p.Enabled, &p.CreatedAt, &p.UpdatedAt); err != nil {
+			return nil, err
+		}
+		list = append(list, p)
+	}
+	return list, nil
+}
+
+func (d *DB) UpdateModelPricing(p *models.ModelPricing) error {
+	_, err := d.conn.Exec(`UPDATE model_pricing SET input_multiplier = ?, output_multiplier = ?, min_charge = ?, enabled = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		p.InputMultiplier, p.OutputMultiplier, p.MinCharge, p.Enabled, p.ID)
+	return err
+}
+
+func (d *DB) GetAllCoupons() ([]models.Coupon, error) {
+	rows, err := d.conn.Query(`SELECT id, code, quota, days, max_uses, used_count, plan_id, expired_at, is_active, created_by, created_at FROM coupons ORDER BY id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []models.Coupon
+	for rows.Next() {
+		c := models.Coupon{}
+		var exp sql.NullTime
+		if err := rows.Scan(&c.ID, &c.Code, &c.Quota, &c.Days, &c.MaxUses, &c.UsedCount, &c.PlanID, &exp, &c.IsActive, &c.CreatedBy, &c.CreatedAt); err != nil {
+			return nil, err
+		}
+		if exp.Valid {
+			c.ExpiredAt = &exp.Time
+		}
+		list = append(list, c)
+	}
+	return list, nil
+}
+
+func (d *DB) GetSystemStats() (map[string]any, error) {
+	var totalKeys, activeKeys, totalQuotaIssued, totalQuotaConsumed int64
+	_ = d.conn.QueryRow(`SELECT COUNT(*), SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END), SUM(total_quota), SUM(consumed_quota) FROM virtual_keys`).
+		Scan(&totalKeys, &activeKeys, &totalQuotaIssued, &totalQuotaConsumed)
+
+	var totalProviders, activeProviders int64
+	_ = d.conn.QueryRow(`SELECT COUNT(*), SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END) FROM providers`).
+		Scan(&totalProviders, &activeProviders)
+
+	var totalTransactions int64
+	_ = d.conn.QueryRow(`SELECT COUNT(*) FROM quota_transactions`).Scan(&totalTransactions)
+
+	return map[string]any{
+		"total_keys":           totalKeys,
+		"active_keys":          activeKeys,
+		"total_quota_issued":   totalQuotaIssued,
+		"total_quota_consumed": totalQuotaConsumed,
+		"total_providers":      totalProviders,
+		"active_providers":     activeProviders,
+		"total_transactions":   totalTransactions,
+	}, nil
+}

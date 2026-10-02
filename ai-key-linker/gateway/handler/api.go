@@ -50,6 +50,9 @@ func (h *APIHandler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/coupons/redeem", h.handleCouponRedeem)
 	mux.HandleFunc("/api/v1/admin/stats", h.handleAdminStats)
 	mux.HandleFunc("/api/v1/providers", h.handleProviders)
+
+	// Web UI Dashboard
+	h.RegisterDashboardRoutes(mux)
 }
 
 // Global CORS Middleware
